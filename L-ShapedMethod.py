@@ -5,88 +5,115 @@ env = gp.Env()
 env.setParam('OutputFlag', 0)  # in seconds
 
 # Initialization
+c = np.array([150, 230, 260], int)
+q = np.array([238, 210, -170, -150, -36, -10, 0, 0, 0])
+A = np.array([1, 1, 1])
+b = 500
+ub = 6000
+T = np.array([[[3, 0, 0], [0, 3.6, 0], [0, 0, 24]],
+              [[2.5, 0, 0], [0, 3, 0], [0, 0, 20]],
+              [[2, 0, 0], [0, 2.4, 0], [0, 0, 16]]], int)
+W = np.array([[1, 0, -1, 0, 0, 0, -1, 0, 0],
+              [0, 1, 0, -1, 0, 0, 0, -1, 0],
+              [0, 0, 0, 0, -1, -1, 0, 0, -1]], int)
+h = np.array([200, 240, 0], int)
+I = np.ones(len(W))
+scenario_count = len(T)
+prob = np.array([1/3, 1/3, 1/3])
+xStar = np.array([0, 0, 0])  # xStar is the solution to the master problem.
+
+# Create models for feasibility cuts
+feasibility = []
+for index in range(scenario_count):
+    feasibility.append(gp.Model(f'scenario {index} - feasibility', env=env))
+    Y = feasibility[index].addMVar((9,), name='Y')  # y1, y2, p1, p2, p3, p4, e1, e2, e3
+    PV = feasibility[index].addMVar((3,), name='Positive V')
+    NV = feasibility[index].addMVar((3,), name='Negative V')
+    feasibility[index].addConstr(Y[4] <= ub, name='P3 upper bound')
+    feasibility[index].addConstr(W @ Y + PV - NV == h - T[index] @ xStar, name='Feasibility')
+    feasibility[index].setObjective(A@PV + A@NV, GRB.MINIMIZE)
+    feasibility[index].update()
+
+# Create models for optimality cuts
+optimality = []
+for index in range(scenario_count):
+    optimality.append(gp.Model(f'scenario {index} - optimality', env=env))
+    Y = optimality[index].addMVar((9,), name='Y')  # y1, y2, p1, p2, p3, p4, e1, e2, e3
+    optimality[index].addConstr(Y[4] <= ub, name='P3 upper bound')
+    optimality[index].addConstr(W @ Y >= h - T[index] @ xStar, name='Optimality')
+    optimality[index].setObjective(q@Y, GRB.MINIMIZE)
+    optimality[index].update()
+
+# Create Master Problem
+MP = gp.Model('Master Problem', env=env)
+X = MP.addMVar((3,), name='X')
+MP.addConstr(A@X <= b, name='AXb')
+MP.setObjective(c@X, GRB.MINIMIZE)
 
 
+# Initialization
+w = 0
+theta_termination = float('-inf')  # theta
+v = 1
 
-# h,T
-h1 = np.array([0, 0, 500, 100])
-h2 = np.array([0, 0, 300, 300])
-T = np.array([[-60, 0], [0, -80], [0, 0], [0, 0]])
-W = np.array([[6, 10], [8, 5], [1, 0], [0, 1]])
-p1, p2 = .4, .6
-# Master Problem
-c = np.array([100, 150])
-a1 = np.array([1, 1])
-rhs1 = 120
-master = gp.Model('MasterProblem', env=env)
-X = master.addMVar((2,), name='X')
-master.addConstr(X[0] >= 40, name='X lb')
-master.addConstr(X[1] >= 20, name='X lb')
-master.addConstr(a1 @ X <= rhs1, name='Const1')  # Ax <= b
-master.setObjective(c @ X, GRB.MINIMIZE)  # cx
-master.optimize()
-x_star = [X[0].x, X[1].x]
+while theta_termination < w:
+    # Solve MP
+    MP.optimize()
+    xStar = np.array([X[0].x, X[1].x, X[2].x])
+    print(f'MP objective value {MP.ObjVal}')
 
-# sub-problem 1
-s1 = np.array([-24, -28])
-sub1 = gp.Model('SubProblem 1', env=env)  # sub-problem
-Y1 = sub1.addMVar((4, ), lb=0.0, name='Y1')
-sub1.addConstr(np.transpose(W) @ Y1 >= s1, name='sub1 constraint')
-sub1.setParam('InfUnbdInfo', 1)
-
-
-# sub-problem 2
-s2 = np.array([-28, -32])
-sub2 = gp.Model('SubProblem 2', env=env)  # sub-problem
-Y2 = sub2.addMVar((4, ), lb=0.0, name='Y2')
-sub2.addConstr(np.transpose(W) @ Y2 >= s2, name='sub2 constraint')
-sub2.setParam('InfUnbdInfo', 1)
-
-
-# Algorithm parameters
-w = 0  # w = p*pi*h - p*pi*T@x
-termination = float('-inf')  # theta
-check_solution = (GRB.UNBOUNDED, GRB.INFEASIBLE, GRB.INF_OR_UNBD)
-
-# Conditional Loop
-loop_index = 1
-
-theta = master.addVar(lb=float('-inf'), name='theta')  # add theta variable to the master problem
-master.setObjective(c @ X + theta, GRB.MINIMIZE)  # update master's objective function
-master.update()
-while loop_index <= 10:
-
-    print(f'Iteration {loop_index}', 20*'=')
-
-    sub1.setObjective((h1 - T @ x_star) @ Y1, GRB.MAXIMIZE)
-    sub1.update()
-    sub1.optimize()
-
-    sub2.setObjective((h2 - T @ x_star) @ Y2, GRB.MAXIMIZE)
-    sub2.update()
-    sub2.optimize()
-
-    if sub1.status in check_solution or sub2.status in check_solution:
-        print('Feasibility cut is needed.')
-        if sub1.status == 5:
-            master.addConstr((h1 - T @ X) @ Y1.UnbdRay <= 0, name='FeasCut')
-            master.update()
-        if sub2.status == 5:
-            master.addConstr((h2 - T @ X) @ Y2.UnbdRay <= 0, name='FeasCut')
-            master.update()
+    if v == 1:
+        theta = MP.addVar(lb=float('-inf'), name='theta')
+        MP.setObjective(c@X + theta, GRB.MINIMIZE)
+        MP.update()
     else:
-        print('Both scenarios are bounded, optimality cut must be added')
-        print(Y1)
-        Pi1 = [Y1[0].x, Y1[1].x, Y1[2].x, Y1[3].x]
-        Pi2 = [Y2[0].x, Y2[1].x, Y2[2].x, Y2[3].x]
-        print(Pi2, Pi1)
-        e = p1 * (Pi1 @ h1) + p2 * (Pi2 @ h2)
-        E = p1 * (Pi1 @ T) + p2 * (Pi2 @ T)
-        master.addConstr(E @ X + theta >= e, name='OpCut' + str(loop_index))  # add the optimality cut
-        master.update()
-        master.optimize()
-        w = e - E @ x_star
-        print(theta)
-    master.optimize()
-    x_star = [X[0].x, X[1].x]
-    loop_index += 1
+        theta_termination = theta.x
+    # First, update the constraint right hand side of each scenario feasibility constraint. Second, solve the problem\
+    # and save the w'
+    index = 0
+    w_prim = 0
+    for m in feasibility:
+        constraints = m.getConstrs()[1:]
+        m.setAttr('RHS', constraints, h - T[index] @ xStar)
+        m.update()
+        m.optimize()
+
+        if m.ObjVal > 0:
+            # calculate and add feasibility cuts
+            duals = m.getAttr('Pi', m.getConstrs()[1:])
+            D = np.transpose(duals) @ T[index]
+            d = np.transpose(duals) @ h
+            MP.addConstr(D @ X >= d, name='Feasibility cut')
+            MP.update()
+
+        w_prim += abs(m.ObjVal)
+        index += 1
+
+    if w_prim == 0:
+        # let's do optimality cuts
+        index = 0
+        duals = []
+        for m in optimality:
+            constraints = m.getConstrs()[1:]
+            m.setAttr('RHS', constraints, h - T[index] @ xStar)
+            m.update()
+            m.optimize()
+            duals.append(np.transpose(m.getAttr('Pi', m.getConstrs()[1:])))
+            index += 1
+        E = prob[0]*(duals[0] @ T[0]) + prob[1]*(duals[1] @ T[1]) + prob[2]*(duals[2] @ T[2])
+        e = prob[0]*(duals[0] @ h) + prob[1]*(duals[1] @ h) + prob[2]*(duals[2] @ h)
+        MP.addConstr(E@X + theta >= e)
+        MP.update()
+
+        w = e - E@xStar
+        print(f'theta: {theta_termination},     w: {w}')
+    else:
+        # unfortunately, we need to start over, Duh
+        print(f'Iteration {v}, master problem need to be solved again with feasibility cuts')
+    v += 1
+
+print(f'You got the optimal solution and it is: ')
+for index in range(len(xStar)):
+    print(f'X{index+1} = {xStar[index]}')
+
+
