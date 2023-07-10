@@ -13,9 +13,9 @@ ub = 6000
 T = np.array([[[3, 0, 0], [0, 3.6, 0], [0, 0, 24]],
               [[2.5, 0, 0], [0, 3, 0], [0, 0, 20]],
               [[2, 0, 0], [0, 2.4, 0], [0, 0, 16]]], int)
-W = np.array([[1, 0, -1, 0, 0, 0, -1, 0, 0],
-              [0, 1, 0, -1, 0, 0, 0, -1, 0],
-              [0, 0, 0, 0, -1, -1, 0, 0, -1]], int)
+W = np.array([[1, 0, -1,  0,  0,  0, -1,  0, 0],
+              [0, 1,  0, -1,  0,  0,  0, -1, 0],
+              [0, 0,  0,  0, -1, -1,  0,  0, -1]], int)
 h = np.array([200, 240, 0], int)
 I = np.ones(len(W))
 scenario_count = len(T)
@@ -31,7 +31,7 @@ for index in range(scenario_count):
     NV = feasibility[index].addMVar((3,), name='Negative V')
     feasibility[index].addConstr(Y[4] <= ub, name='P3 upper bound')
     feasibility[index].addConstr(W @ Y + PV - NV == h - T[index] @ xStar, name='Feasibility')
-    feasibility[index].setObjective(A@PV + A@NV, GRB.MINIMIZE)
+    feasibility[index].setObjective(I@PV + I@NV, GRB.MINIMIZE)
     feasibility[index].update()
 
 # Create models for optimality cuts
@@ -49,6 +49,7 @@ MP = gp.Model('Master Problem', env=env)
 X = MP.addMVar((3,), name='X')
 MP.addConstr(A@X <= b, name='AXb')
 MP.setObjective(c@X, GRB.MINIMIZE)
+MP.update()
 
 
 # Initialization
@@ -61,6 +62,7 @@ while theta_termination < w:
     MP.optimize()
     xStar = np.array([X[0].x, X[1].x, X[2].x])
     print(f'MP objective value {MP.ObjVal}')
+    print(xStar)
 
     if v == 1:
         theta = MP.addVar(lb=float('-inf'), name='theta')
@@ -106,7 +108,7 @@ while theta_termination < w:
         MP.update()
 
         w = e - E@xStar
-        print(f'theta: {theta_termination},     w: {w}')
+        #print(f'theta: {theta_termination},     w: {w}')
     else:
         # unfortunately, we need to start over, Duh
         print(f'Iteration {v}, master problem need to be solved again with feasibility cuts')
