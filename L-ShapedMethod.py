@@ -5,6 +5,7 @@ env = gp.Env()
 env.setParam('OutputFlag', 0)  # in seconds
 
 # Initialization
+
 c = np.array([150, 230, 260], int)
 q = np.array([238, 210, -170, -150, -36, -10, 0, 0, 0])
 A = np.array([1, 1, 1])
